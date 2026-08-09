@@ -1,36 +1,32 @@
-# Content Lab — Instagram Content Dashboard
+# Content Lab AI — URL → Original Post/Reel
 
-A starter Streamlit dashboard for a mobile-first Instagram meme/current-events page.
+## What it does
 
-## Run locally
+1. Paste a public Instagram post/reel URL.
+2. Reads publicly exposed metadata/thumbnail.
+3. Uses the OpenAI API to analyse creative DNA: hook, layout, visual style, CTA, pacing and content type.
+4. Generates an original visual with GPT Image.
+5. Creates an Instagram-ready image post.
+6. Creates a simple MP4 editorial reel from generated cards.
 
-```bash
-pip install -r requirements.txt
-streamlit run app.py
-```
+## Required
 
-## Deploy on Streamlit Community Cloud
+You need an OpenAI API key. OpenAI's current API supports image generation and Sora video generation, but this starter uses GPT Image plus local FFmpeg for the reel so it does not require a Sora video job.
 
-1. Create a GitHub repository.
-2. Upload `app.py` and `requirements.txt`.
-3. Open Streamlit Community Cloud.
-4. Select the repository and `app.py`.
-5. Deploy.
+## Streamlit Cloud
 
-## Current modules
+Add this secret:
 
-- Dashboard
-- Content Analyzer
-- Create Content
-- Templates
-- Performance
+OPENAI_API_KEY = "your-key"
 
-## Next development phases
+Then deploy `app.py`.
 
-1. Save topics/drafts permanently
-2. Add reference-post/image analysis
-3. Add AI hook + caption generation
-4. Add image/video template rendering
-5. Add performance database
-6. Calculate content/engagement scores
-7. Add trend/topic research
+The `packages.txt` file installs FFmpeg.
+
+## Important limitation
+
+Instagram may block automated access to some posts/reels. The app first tries public page metadata. If Instagram blocks the page, use a public URL that exposes metadata. A later version can add a direct upload fallback for screenshots/video files.
+
+## Do not copy
+
+The system analyses the reference's creative structure but generates new copy and artwork. It intentionally does not ask the model to reproduce the original watermark, logo, username, or exact composition.
