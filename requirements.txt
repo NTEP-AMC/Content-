@@ -1,4 +1,2 @@
 streamlit>=1.40,<2
-openai>=1.100.0
-requests>=2.32.0
-Pillow>=10.4.0
+Pillow>=10.0
