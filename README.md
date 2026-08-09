@@ -1,18 +1,19 @@
-# Content Lab FREE V1
+# Content Lab FREE V2
 
-No OpenAI API key required.
-
-## What it does
-- Paste an Instagram post/Reel URL
-- Optionally enter a topic
-- Choose Post or Reel
-- Choose a style
-- Generate and download an original template-based post/Reel
+Replace the old `app.py` with this version.
 
 ## Deploy
-Upload `app.py`, `requirements.txt`, and `packages.txt` to GitHub and deploy `app.py` on Streamlit Community Cloud.
+Upload:
+- app.py
+- requirements.txt
+- packages.txt
 
-## Important limitation
-Instagram URLs are not scraped or downloaded in this free V1. The URL is used only as a reference identifier. This avoids relying on paid APIs or brittle Instagram scraping.
+No secrets/API key are required.
 
-The next free version can add an upload box for a screenshot/Reel. That lets the app actually inspect the reference visual and reproduce its *design characteristics* without copying the original media.
+## Workflow
+Paste one public Instagram URL -> optional topic -> choose Reel/Post -> Generate -> Download.
+
+## Important
+Instagram may block public HTML/metadata access. This version does not bypass login, private content, or Instagram protections. When metadata is available, it extracts only public Open Graph title/description/image and builds an original layout.
+
+For news/current-event accuracy, a topic still needs a factual research source. This free V2 does not invent facts or pretend that Instagram captions are verified news.
