@@ -1,19 +1,19 @@
-# Content Lab FREE V2
+# Content Lab — Reference Clone V1
 
-Replace the old `app.py` with this version.
-
-## Deploy
-Upload:
-- app.py
-- requirements.txt
-- packages.txt
-
-No secrets/API key are required.
+This is the corrected direction: reference-first, not generic template-first.
 
 ## Workflow
-Paste one public Instagram URL -> optional topic -> choose Reel/Post -> Generate -> Download.
+1. Paste a public Instagram URL OR upload the reference screenshot.
+2. Click GET REFERENCE.
+3. Enter NEW headline and supporting text.
+4. Click CREATE NEW POST.
+5. Download PNG.
 
-## Important
-Instagram may block public HTML/metadata access. This version does not bypass login, private content, or Instagram protections. When metadata is available, it extracts only public Open Graph title/description/image and builds an original layout.
+## Why screenshot upload is recommended
+Instagram may block automated access. A screenshot gives the free app the actual visual reference reliably.
 
-For news/current-event accuracy, a topic still needs a factual research source. This free V2 does not invent facts or pretend that Instagram captions are verified news.
+## No API key
+No OpenAI API or paid service is used.
+
+## Next upgrade
+Once this post output looks right, add Reel mode that uses the same detected design structure scene-by-scene.

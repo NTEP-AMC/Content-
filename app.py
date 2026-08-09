@@ -1,298 +1,257 @@
 
-import io, os, re, html, json, math, subprocess, textwrap, zipfile
+import io, re, html
 from pathlib import Path
 import requests
 from bs4 import BeautifulSoup
-from PIL import Image, ImageDraw, ImageFont, ImageFilter, ImageEnhance, ImageOps
+from PIL import Image, ImageDraw, ImageFont, ImageEnhance, ImageFilter, ImageOps
 import streamlit as st
 
-st.set_page_config(page_title="Content Lab Free", page_icon="🔥", layout="wide")
+st.set_page_config(page_title="Content Lab — Reference Clone", page_icon="🎨", layout="wide")
 
-W, H = 1080, 1920
-UA = {"User-Agent":"Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 Chrome/140 Mobile Safari/537.36"}
-
-# ---------------- fonts ----------------
-def F(size, bold=False, serif=False):
-    paths = []
+# ---------- fonts ----------
+def get_font(size, bold=False, serif=False):
+    names = []
     if serif:
-        paths += ["/usr/share/fonts/truetype/dejavu/DejaVuSerif-Bold.ttf" if bold else "/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf"]
-    paths += [
+        names += [
+            "/usr/share/fonts/truetype/dejavu/DejaVuSerif-Bold.ttf" if bold else "/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf"
+        ]
+    names += [
         "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-        "/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf"
+        "/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf",
     ]
-    for p in paths:
+    for p in names:
         if Path(p).exists():
             return ImageFont.truetype(p, size)
     return ImageFont.load_default()
 
-def wrap(draw, text, fnt, width):
-    text = re.sub(r"\s+", " ", text).strip()
-    out, line = [], ""
-    for word in text.split():
-        t = (line + " " + word).strip()
-        if draw.textbbox((0,0), t, font=fnt)[2] <= width:
-            line = t
+def wrap(draw, text, font, width):
+    words = re.sub(r"\s+", " ", text.strip()).split()
+    lines, line = [], ""
+    for word in words:
+        trial = (line + " " + word).strip()
+        if draw.textbbox((0, 0), trial, font=font)[2] <= width:
+            line = trial
         else:
-            if line: out.append(line)
+            if line:
+                lines.append(line)
             line = word
-    if line: out.append(line)
-    return out
+    if line:
+        lines.append(line)
+    return lines
 
-def dominant_palette(img):
-    im = img.copy().convert("RGB").resize((60,60))
-    # average 3 broad zones, then choose a warm accent
-    px = list(im.getdata())
-    r = sum(p[0] for p in px)//len(px); g = sum(p[1] for p in px)//len(px); b = sum(p[2] for p in px)//len(px)
-    bg = (max(8,r//5), max(8,g//5), max(10,b//5))
-    # high-contrast accent derived from complementary-ish value
-    accent = (min(255, 255-r), min(210, 210-g), min(210, 210-b))
-    if sum(accent) < 240: accent = (238, 75, 58)
-    return bg, accent
+# ---------- instagram public preview ----------
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 Chrome/140 Mobile Safari/537.36"
+}
 
-# ---------------- instagram metadata ----------------
-def meta_content(soup, prop):
-    tag = soup.find("meta", attrs={"property":prop}) or soup.find("meta", attrs={"name":prop})
-    return tag.get("content","").strip() if tag else ""
+def og(soup, name):
+    tag = soup.find("meta", attrs={"property": name}) or soup.find("meta", attrs={"name": name})
+    return tag.get("content", "").strip() if tag else ""
 
-def fetch_reference(url):
-    r = requests.get(url, headers=UA, timeout=15, allow_redirects=True)
+def get_instagram_preview(url):
+    r = requests.get(url, headers=HEADERS, timeout=15, allow_redirects=True)
     r.raise_for_status()
     soup = BeautifulSoup(r.text, "html.parser")
-    title = meta_content(soup, "og:title") or (soup.title.string.strip() if soup.title and soup.title.string else "")
-    desc = meta_content(soup, "og:description") or meta_content(soup, "description")
-    image_url = meta_content(soup, "og:image")
-    canonical = meta_content(soup, "og:url") or url
-    img = None
-    if image_url:
-        ir = requests.get(image_url, headers=UA, timeout=15)
-        ir.raise_for_status()
-        img = Image.open(io.BytesIO(ir.content)).convert("RGB")
-    # clean Instagram boilerplate from description
-    desc = re.sub(r"\s+", " ", html.unescape(desc)).strip()
-    desc = re.sub(r"^\d[\d,.KMB]*\s+(?:likes?|views?)\s*,?\s*", "", desc, flags=re.I)
-    return {"title":title, "description":desc, "image_url":image_url, "canonical":canonical, "image":img}
+    title = og(soup, "og:title")
+    desc = og(soup, "og:description")
+    image_url = og(soup, "og:image")
+    if not image_url:
+        raise RuntimeError("Instagram did not expose a public preview image.")
+    ir = requests.get(image_url, headers=HEADERS, timeout=15)
+    ir.raise_for_status()
+    image = Image.open(io.BytesIO(ir.content)).convert("RGB")
+    return image, title, desc
 
-# ---------------- free content extraction ----------------
-STOP = {"instagram","reel","video","watch","follow","india","the","and","for","with","this","that","from"}
+# ---------- color/layout detection ----------
+def analyze_reference(img):
+    # This is deliberately deterministic/free: no paid AI.
+    w, h = img.size
+    ratio = w / h
 
-def make_headline(meta, topic):
-    if topic.strip():
-        base = topic.strip()
+    # Sample broad regions to estimate background/text zones.
+    small = img.resize((120, 120)).convert("RGB")
+    pix = list(small.getdata())
+    avg = tuple(sum(p[i] for p in pix) // len(pix) for i in range(3))
+
+    # Estimate whether top area is dark/light.
+    top = img.crop((0, 0, w, int(h * .32))).resize((80, 80)).convert("L")
+    top_avg = sum(top.getdata()) / (80 * 80)
+    dark_top = top_avg < 105
+
+    # Choose a high-contrast accent based on reference average.
+    if avg[0] > avg[1] * 1.15 and avg[0] > avg[2] * 1.15:
+        accent = (225, 68, 60)
+    elif avg[1] > avg[0] * 1.12:
+        accent = (52, 160, 95)
+    elif avg[2] > avg[0] * 1.15:
+        accent = (55, 110, 210)
     else:
-        base = meta.get("description") or meta.get("title") or "The story everyone is talking about"
-        # keep first useful sentence, remove handle-ish boilerplate
-        base = re.split(r"[|•]\s*", base)[0]
-        base = re.sub(r"@\w+", "", base).strip()
-    base = re.sub(r"\s+", " ", base).strip(" .")
-    # short, punchy editorial headline
-    if len(base) > 82:
-        base = base[:79].rsplit(" ",1)[0] + "…"
-    return base
+        accent = (185, 45, 90)
 
-def make_support(meta, headline):
-    d = meta.get("description","")
-    d = re.sub(r"https?://\S+","",d)
-    d = re.sub(r"\s+"," ",d).strip()
-    if d and d.lower() != headline.lower():
-        if len(d) > 150: d = d[:147].rsplit(" ",1)[0] + "…"
-        return d
-    return "Here’s the context, the key detail and why people are talking about it."
+    return {
+        "ratio": ratio,
+        "dark_top": dark_top,
+        "accent": accent,
+        "average": avg,
+        "top_height": 0.30 if dark_top else 0.24,
+        "image_start": 0.30 if dark_top else 0.22,
+    }
 
-def split_points(headline, support):
-    # 5 editorial scenes; not a factual rewrite
-    return [
-        ("THE HOOK", headline),
-        ("WHAT'S GOING ON", support[:120] if support else headline),
-        ("THE KEY DETAIL", "Look at the detail people are missing."),
-        ("WHY IT MATTERS", "A small detail can change the whole story."),
-        ("YOUR TAKE", "What do you think? Tell us below.")
-    ]
+# ---------- create original post using detected structure ----------
+def make_clone_post(reference, analysis, headline, subheadline, brand):
+    OUT_W, OUT_H = 1080, 1350
 
-# ---------------- image treatment ----------------
-def cover_crop(img, size=(W,H), zoom=1.0, x=0.5, y=0.5):
-    iw, ih = img.size
-    tw, th = size
-    scale = max(tw/iw, th/ih) * zoom
-    nw, nh = int(iw*scale), int(ih*scale)
-    im = img.resize((nw,nh), Image.Resampling.LANCZOS)
-    left = max(0, min(nw-tw, int((nw-tw)*x)))
-    top = max(0, min(nh-th, int((nh-th)*y)))
-    return im.crop((left,top,left+tw,top+th))
+    # The reference is treated as a visual/layout reference.
+    # We create a NEW composition; original reference text/logo is not copied.
+    ref = ImageOps.fit(reference, (OUT_W, 950), method=Image.Resampling.LANCZOS, centering=(0.5, 0.45))
+    ref = ImageEnhance.Color(ref).enhance(0.88)
+    ref = ImageEnhance.Contrast(ref).enhance(1.06)
 
-def draw_text_block(d, text, x, y, width, size, fill="white", bold=True, serif=False, max_lines=5, spacing=8):
-    f = F(size,bold,serif)
-    lines = wrap(d,text,f,width)
-    lines = lines[:max_lines]
-    yy=y
+    canvas = Image.new("RGB", (OUT_W, OUT_H), (8, 8, 10))
+    d = ImageDraw.Draw(canvas)
+
+    # Top headline zone — modeled after the reference's measured top area.
+    top_h = int(analysis["top_height"] * OUT_H)
+    if analysis["dark_top"]:
+        d.rectangle((0, 0, OUT_W, top_h), fill=(8, 8, 10))
+        text_color = "white"
+    else:
+        d.rectangle((0, 0, OUT_W, top_h), fill=(245, 245, 242))
+        text_color = (20, 20, 20)
+
+    # Small brand
+    d.text((54, 35), brand.upper(), font=get_font(27, True), fill=text_color)
+
+    # Headline
+    headline_font = get_font(60, True, serif=True)
+    lines = wrap(d, headline, headline_font, 950)[:4]
+    y = 105
     for line in lines:
-        d.text((x,yy),line,font=f,fill=fill,stroke_width=2,stroke_fill=(0,0,0))
-        yy += size + spacing
-    return yy
+        bbox = d.textbbox((0, 0), line, font=headline_font)
+        x = (OUT_W - (bbox[2] - bbox[0])) // 2
+        d.text((x, y), line, font=headline_font, fill=text_color, stroke_width=1,
+               stroke_fill=(0,0,0) if text_color == "white" else (245,245,242))
+        y += 68
 
-# ---------------- reel rendering ----------------
-def render_reel(meta, headline, support, style):
-    ref = meta.get("image")
-    if ref is None:
-        ref = Image.new("RGB",(900,1200),(32,32,38))
-        rd=ImageDraw.Draw(ref)
-        rd.text((70,500),"CONTENT LAB",font=F(70,True),fill="white")
+    # Image area
+    canvas.paste(ref, (0, top_h))
 
-    bg, accent = dominant_palette(ref)
-    scenes = split_points(headline,support)
-    fps, sec_per = 24, 2.35
-    total = int(len(scenes)*sec_per*fps)
-    frame_dir = Path("/tmp/content_lab_frames_v2")
-    frame_dir.mkdir(exist_ok=True)
-    for p in frame_dir.glob("*.jpg"): p.unlink()
+    # Strong lower readability gradient
+    overlay = Image.new("RGBA", (OUT_W, OUT_H), (0,0,0,0))
+    od = ImageDraw.Draw(overlay)
+    for yy in range(800, OUT_H):
+        alpha = int(35 + 170 * ((yy - 800) / (OUT_H - 800)))
+        od.line((0, yy, OUT_W, yy), fill=(0,0,0,min(alpha,205)))
+    canvas = Image.alpha_composite(canvas.convert("RGBA"), overlay)
+    d = ImageDraw.Draw(canvas)
 
-    for i in range(total):
-        t=i/fps
-        scene=min(len(scenes)-1,int(t/sec_per))
-        local=(t-scene*sec_per)/sec_per
-        label, text=scenes[scene]
+    # Editorial caption box
+    box_y = 960
+    accent = analysis["accent"]
+    d.rounded_rectangle((48, box_y, 1032, 1245), radius=18,
+                        fill=(5,5,8,225), outline=accent+(255,), width=3)
 
-        # reference image fills canvas with motion + dark editorial treatment
-        zoom=1.03+0.07*local
-        x=0.42+0.16*local
-        y=0.48+0.04*math.sin(local*math.pi)
-        base=cover_crop(ref,(W,H),zoom,x,y)
-        base=ImageEnhance.Color(base).enhance(0.82)
-        base=ImageEnhance.Contrast(base).enhance(1.08)
-        # dark overlay, stronger toward bottom
-        ov=Image.new("RGBA",(W,H),(0,0,0,92))
-        od=ImageDraw.Draw(ov)
-        od.rectangle((0,0,W,430),fill=(0,0,0,150))
-        od.rectangle((0,1150,W,H),fill=(0,0,0,165))
-        img=Image.alpha_composite(base.convert("RGBA"),ov)
-        d=ImageDraw.Draw(img)
+    # Small label
+    d.rounded_rectangle((75, box_y+30, 300, box_y+82), radius=14, fill=accent+(255,))
+    d.text((94, box_y+40), "THE STORY", font=get_font(24, True), fill="white")
 
-        # top brand strip
-        d.rectangle((0,0,W,18),fill=accent+(255,))
-        d.text((58,62),"CONTENT LAB",font=F(32,True),fill="white")
-        d.text((760,66),f"{scene+1:02d}/05",font=F(30,True),fill=(225,225,225))
+    sub_font = get_font(39, False)
+    sy = box_y + 112
+    for line in wrap(d, subheadline, sub_font, 890)[:5]:
+        d.text((78, sy), line, font=sub_font, fill=(238,238,238))
+        sy += 48
 
-        # small label
-        label_y=205
-        d.rounded_rectangle((55,label_y,55+max(210, len(label)*20),label_y+62),radius=18,fill=accent+(245,))
-        d.text((78,label_y+12),label,font=F(28,True),fill="white")
+    d.text((78, 1190), "SAVE • SHARE • DISCUSS", font=get_font(25, True), fill=accent+(255,))
+    d.text((78, 1230), brand, font=get_font(23), fill=(170,170,170))
 
-        # main headline / support
-        if scene==0:
-            draw_text_block(d,text,55,330,950,92,fill="white",bold=True,serif=True,max_lines=4,spacing=10)
-        elif scene==1:
-            draw_text_block(d,text,55,400,930,62,fill="white",bold=True,max_lines=5,spacing=12)
-        else:
-            draw_text_block(d,text,55,430,930,72,fill="white",bold=True,serif=(style=="Editorial"),max_lines=5,spacing=12)
+    return canvas.convert("RGB")
 
-        # bottom editorial card
-        d.rounded_rectangle((45,1575,1035,1805),radius=28,fill=(8,8,12,210))
-        d.text((75,1615),"SAVE • SHARE • DISCUSS",font=F(28,True),fill=accent+(255,))
-        d.text((75,1680),"Original edit generated from the reference format",font=F(29),fill=(235,235,235))
-        d.text((75,1730),"No original Reel footage is copied into this render.",font=F(25),fill=(180,180,180))
+# ---------- UI ----------
+st.title("🎨 Content Lab — Reference Clone")
+st.caption("Reference → detect structure → create a NEW post with the same design logic. Free; no OpenAI API.")
 
-        # progress
-        progress=(i+1)/total
-        d.rounded_rectangle((55,1850,1025,1862),radius=6,fill=(80,80,80,220))
-        d.rounded_rectangle((55,1850,55+970*progress,1862),radius=6,fill=accent+(255,))
+st.info(
+    "For the most reliable free workflow, upload the reference screenshot from Instagram. "
+    "A URL is also supported when Instagram exposes its public preview image."
+)
 
-        # quick scene transition bar
-        if local < 0.18:
-            alpha=int(255*(1-local/0.18))
-            d.rectangle((0,0,W,H),fill=(0,0,0,alpha))
+url = st.text_input("1. Instagram post / Reel URL", placeholder="https://www.instagram.com/reel/...")
+uploaded = st.file_uploader("OR upload the reference screenshot (recommended)", type=["png","jpg","jpeg","webp"])
 
-        img.convert("RGB").save(frame_dir/f"frame_{i:05d}.jpg",quality=88)
+if "reference" not in st.session_state:
+    st.session_state.reference = None
 
-    out="/tmp/content_lab_reel_v2.mp4"
-    subprocess.run(["ffmpeg","-y","-loglevel","error","-framerate",str(fps),
-                    "-i",str(frame_dir/"frame_%05d.jpg"),
-                    "-c:v","libx264","-preset","veryfast","-pix_fmt","yuv420p",
-                    "-movflags","+faststart",out],check=True)
-    return out
-
-# ---------------- post ----------------
-def render_post(meta, headline, support, style):
-    ref=meta.get("image")
-    if ref is None:
-        ref=Image.new("RGB",(900,1200),(35,35,42))
-    bg,accent=dominant_palette(ref)
-    Wp,Hp=1080,1350
-    img=cover_crop(ref,(Wp,Hp),1.02,0.5,0.48)
-    img=ImageEnhance.Color(img).enhance(0.78)
-    img=ImageEnhance.Contrast(img).enhance(1.1)
-    ov=Image.new("RGBA",(Wp,Hp),(0,0,0,65))
-    od=ImageDraw.Draw(ov)
-    od.rectangle((0,0,Wp,360),fill=(0,0,0,185))
-    od.rectangle((0,910,Wp,Hp),fill=(0,0,0,170))
-    img=Image.alpha_composite(img.convert("RGBA"),ov)
-    d=ImageDraw.Draw(img)
-
-    d.rectangle((0,0,Wp,14),fill=accent+(255,))
-    d.text((55,48),"CONTENT LAB",font=F(32,True),fill="white")
-    d.rounded_rectangle((55,130,300,195),radius=18,fill=accent+(245,))
-    d.text((78,144),style.upper(),font=F(26,True),fill="white")
-    draw_text_block(d,headline,55,245,950,72,fill="white",bold=True,serif=True,max_lines=4,spacing=8)
-
-    d.rounded_rectangle((45,930,1035,1260),radius=28,fill=(7,7,10,220))
-    draw_text_block(d,support,75,985,900,42,fill=(235,235,235),bold=False,max_lines=5,spacing=9)
-    d.text((75,1190),"SAVE • SHARE • COMMENT",font=F(28,True),fill=accent+(255,))
-    d.text((75,1230),"Original design • Content Lab",font=F(24),fill=(180,180,180))
-    return img.convert("RGB")
-
-# ---------------- UI ----------------
-st.title("🔥 Content Lab — FREE V2")
-st.caption("One link → extract public reference metadata → create an original, editorial-style Post or Reel. No OpenAI API.")
-
-url=st.text_input("Paste ONE public Instagram post / Reel URL",placeholder="https://www.instagram.com/reel/...")
-topic=st.text_input("Topic (optional — leave blank to use the public caption/title)",placeholder="e.g. Cabinet reshuffle rumours")
-
-c1,c2,c3=st.columns(3)
-with c1: kind=st.selectbox("Output",["Reel (9:16)","Post (4:5)"])
-with c2: style=st.selectbox("Design DNA",["Editorial","News","Meme","Political","Archive"])
-with c3: source_mode=st.selectbox("Visual treatment",["Reference thumbnail + new layout","Text-led editorial"])
-
-if st.button("🚀 ANALYZE + GENERATE",type="primary",use_container_width=True):
-    if not url.strip():
-        st.error("Paste an Instagram URL.")
-        st.stop()
-
-    with st.spinner("Reading public Instagram metadata…"):
+if st.button("🔎 GET REFERENCE", use_container_width=True):
+    if uploaded:
+        st.session_state.reference = Image.open(uploaded).convert("RGB")
+        st.success("Reference screenshot loaded.")
+    elif url.strip():
         try:
-            meta=fetch_reference(url.strip())
+            with st.spinner("Getting public Instagram preview…"):
+                img, title, desc = get_instagram_preview(url.strip())
+            st.session_state.reference = img
+            st.success("Public preview loaded.")
+            if title:
+                st.caption("Reference title: " + title)
         except Exception as e:
-            st.error("Instagram did not expose enough public metadata from this URL.")
-            st.info("For the completely free version, use a public post/Reel URL that exposes a preview. If Instagram blocks it, upload the screenshot/video in the next step.")
-            st.stop()
-
-    headline=make_headline(meta,topic)
-    support=make_support(meta,headline)
-
-    st.success("Reference found. Creating a new original design.")
-    with st.expander("Reference analysis"):
-        st.write("**Title:**",meta.get("title") or "Not exposed")
-        st.write("**Public description:**",meta.get("description") or "Not exposed")
-        st.write("**Reference image:**", "Found" if meta.get("image") else "Not exposed")
-
-    if meta.get("image"):
-        st.image(meta["image"],caption="Public reference thumbnail used only as a visual input.",width=260)
-
-    if "Reel" in kind:
-        with st.spinner("Rendering 5-scene 9:16 Reel…"):
-            out=render_reel(meta,headline,support,style)
-        data=Path(out).read_bytes()
-        st.video(data)
-        st.download_button("⬇️ DOWNLOAD REEL (MP4)",data,"content_lab_reel.mp4","video/mp4",use_container_width=True)
+            st.error("Instagram blocked or did not expose a preview image.")
+            st.warning("Upload the Instagram screenshot instead. This is the reliable FREE fallback.")
     else:
-        img=render_post(meta,headline,support,style)
-        b=io.BytesIO(); img.save(b,"PNG"); b.seek(0)
-        st.image(b.getvalue(),caption="Original 4:5 Instagram post",use_container_width=True)
-        st.download_button("⬇️ DOWNLOAD POST (PNG)",b.getvalue(),"content_lab_post.png","image/png",use_container_width=True)
+        st.error("Paste a URL or upload a screenshot.")
+
+ref = st.session_state.reference
+if ref:
+    st.divider()
+    left, right = st.columns([1, 1])
+    with left:
+        st.subheader("Reference")
+        st.image(ref, use_container_width=True)
+    with right:
+        analysis = analyze_reference(ref)
+        st.subheader("Detected design")
+        st.write("**Format ratio:**", f"{analysis['ratio']:.2f}")
+        st.write("**Top zone:**", "Dark editorial" if analysis["dark_top"] else "Light editorial")
+        st.write("**Estimated image zone:**", f"{int(analysis['image_start']*100)}% onward")
+        st.write("**Accent:**", str(analysis["accent"]))
+
+        st.divider()
+        headline = st.text_area(
+            "2. NEW headline",
+            placeholder="Write the headline for your new post",
+            height=100
+        )
+        sub = st.text_area(
+            "3. NEW supporting text",
+            placeholder="1–4 short lines explaining the new story",
+            height=120
+        )
+        brand = st.text_input("Your page name", value="Content Lab")
+
+        if st.button("✨ CREATE NEW POST", type="primary", use_container_width=True):
+            if not headline.strip():
+                st.error("Enter a new headline.")
+                st.stop()
+            if not sub.strip():
+                sub = "The key details behind this story — explained simply."
+            with st.spinner("Building the new creative from the reference structure…"):
+                result = make_clone_post(ref, analysis, headline.strip(), sub.strip(), brand.strip() or "Content Lab")
+
+            b = io.BytesIO()
+            result.save(b, format="PNG")
+            data = b.getvalue()
+
+            st.subheader("NEW CREATIVE")
+            st.image(data, use_container_width=True)
+            st.download_button(
+                "⬇️ DOWNLOAD POST",
+                data,
+                "content_lab_reference_clone.png",
+                "image/png",
+                use_container_width=True
+            )
 
 st.divider()
-st.markdown("### What this FREE V2 actually does")
-st.markdown("""
-- **One URL** is enough when Instagram exposes public `og:title`, `og:description` and `og:image`.
-- The app creates a **new layout** with 5 animated Reel scenes or a 4:5 post.
-- It uses the reference thumbnail as a visual input, with new typography, overlays, motion and composition.
-- **No OpenAI key, paid API, or subscription is required.**
-- It does **not** claim that a URL gives access to every Instagram Reel. Instagram can block automated access.
-""")
+st.caption(
+    "This version copies the reference's general composition/layout logic, not its original text or branding. "
+    "It does not bypass Instagram login/private content or download protected media."
+)
