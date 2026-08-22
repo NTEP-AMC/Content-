@@ -1,10 +1,10 @@
 import io
 import textwrap
 import urllib.parse
+import base64
 from PIL import Image, ImageDraw, ImageFont
 import requests
 import streamlit as st
-import google.generativeai as genai
 
 # --- PAGE CONFIG & STYLING ---
 st.set_page_config(page_title="AI Editorial Studio", layout="centered")
@@ -39,30 +39,16 @@ extra_prompt = st.text_input(
 )
 
 if uploaded_file and api_key and st.button("Generate Original Editorial Post"):
-  with st.spinner(
-      "Step 1: AI is analyzing the topic and creating a satirical visual"
-      " concept..."
-  ):
-    genai.configure(api_key=api_key)
+  with st.spinner("Step 1: AI is analyzing the topic and creating a satirical visual concept..."):
     
-    # --- DYNAMIC MODEL FIX ---
-    # We ask the API to list all available models, filter for 'flash', and automatically pick the newest active one.
-    available_models = [
-        m.name for m in genai.list_models() 
-        if 'generateContent' in m.supported_generation_methods and 'flash' in m.name
-    ]
-    
-    if not available_models:
-        st.error("No Flash models found for your API key. Please check your Google AI Studio account.")
-        st.stop()
-        
-    active_model_name = available_models[0]
-    model = genai.GenerativeModel(active_model_name)
-
-    # Load uploaded image for Gemini Vision
+    # 1. Prepare the image as Base64 for the REST API
     input_image = Image.open(uploaded_file)
+    buffered = io.BytesIO()
+    # Convert to RGB in case it's PNG with transparency
+    input_image.convert('RGB').save(buffered, format="JPEG")
+    img_b64 = base64.b64encode(buffered.getvalue()).decode("utf-8")
 
-    # Prompt Gemini to extract topic, write a sarcastic headline, and create an image prompt
+    # 2. Formulate the prompt
     analysis_prompt = f"""
         You are a top editorial cartoonist and political satirist (like The Tatva or R.K. Laxman).
         Analyze this image and the context note: '{extra_prompt}'.
@@ -72,8 +58,25 @@ if uploaded_file and api_key and st.button("Generate Original Editorial Post"):
         IMAGE_PROMPT: [Write a detailed visual prompt describing a metaphorical, satirical editorial cartoon or dramatic 2D illustration capturing the essence of the debate. Do not put text in the image. Style: high contrast editorial cartoon, dramatic lighting, detailed, dark theme.]
         """
 
-    response = model.generate_content([analysis_prompt, input_image])
-    output_text = response.text
+    # 3. Direct REST API Call (Bypasses all google-generativeai library errors)
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}"
+    headers = {"Content-Type": "application/json"}
+    payload = {
+        "contents": [{
+            "parts": [
+                {"text": analysis_prompt},
+                {"inline_data": {"mime_type": "image/jpeg", "data": img_b64}}
+            ]
+        }]
+    }
+    
+    try:
+        api_response = requests.post(url, headers=headers, json=payload)
+        api_response.raise_for_status() # Check for HTTP errors
+        output_text = api_response.json()["candidates"][0]["content"]["parts"][0]["text"]
+    except Exception as e:
+        st.error(f"API Error: {api_response.text if 'api_response' in locals() else str(e)}")
+        st.stop()
 
     # Parse headline and image prompt
     headline = "Editorial Analysis"
@@ -88,9 +91,7 @@ if uploaded_file and api_key and st.button("Generate Original Editorial Post"):
     st.info(f"**Generated Headline:** {headline}")
     st.caption(f"**Visual Concept Created by AI:** {image_prompt}")
 
-  with st.spinner(
-      "Step 2: Generating brand-new original artwork from scratch..."
-  ):
+  with st.spinner("Step 2: Generating brand-new original artwork from scratch..."):
     # Call free text-to-image API (Pollinations)
     encoded_prompt = urllib.parse.quote(image_prompt)
     image_url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=1000&height=1000&nologo=true"
