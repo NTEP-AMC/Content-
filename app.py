@@ -44,7 +44,20 @@ if uploaded_file and api_key and st.button("Generate Original Editorial Post"):
       " concept..."
   ):
     genai.configure(api_key=api_key)
-    model = genai.GenerativeModel("gemini-2.5-flash")
+    
+    # --- DYNAMIC MODEL FIX ---
+    # We ask the API to list all available models, filter for 'flash', and automatically pick the newest active one.
+    available_models = [
+        m.name for m in genai.list_models() 
+        if 'generateContent' in m.supported_generation_methods and 'flash' in m.name
+    ]
+    
+    if not available_models:
+        st.error("No Flash models found for your API key. Please check your Google AI Studio account.")
+        st.stop()
+        
+    active_model_name = available_models[0]
+    model = genai.GenerativeModel(active_model_name)
 
     # Load uploaded image for Gemini Vision
     input_image = Image.open(uploaded_file)
