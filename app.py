@@ -263,7 +263,7 @@ if uploaded_file and api_key and st.button("Generate Original Editorial Post"):
             """
 
         # 3. Direct REST API Call
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}"
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key={api_key}"
         headers = {"Content-Type": "application/json"}
         payload = {
             "contents": [{
