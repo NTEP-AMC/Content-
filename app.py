@@ -1,77 +1,147 @@
-import streamlit as st
-from PIL import Image, ImageDraw, ImageFont
+import io
 import textwrap
+import urllib.parse
+from PIL import Image, ImageDraw, ImageFont
+import requests
+import streamlit as st
+import google.generativeai as genai
 
-# 1. Inject Custom HTML & CSS for the Streamlit UI
-st.set_page_config(page_title="My Meme Studio", layout="centered")
-st.markdown("""
+# --- PAGE CONFIG & STYLING ---
+st.set_page_config(page_title="AI Editorial Studio", layout="centered")
+st.markdown(
+    """
     <style>
-    .main {background-color: #0E1117;}
-    h1 {color: #FF4B4B; font-family: 'Helvetica', sans-serif;}
-    .stButton>button {
-        background-color: #FF4B4B; color: white; border-radius: 8px; font-weight: bold;
-    }
+    .main {background-color: #121212; color: #E0E0E0;}
+    h1 {color: #FF3B30;}
+    .stButton>button {background-color: #FF3B30; color: white; border-radius: 8px; font-weight: bold;}
     </style>
-""", unsafe_allow_html=True)
-
-st.title("🔥 The Sarcastic News Studio")
-st.write("Upload a raw image or screenshot, and we will generate a branded editorial meme.")
-
-# 2. File Uploader
-uploaded_file = st.file_uploader("Upload raw image...", type=["jpg", "png", "jpeg"])
-
-# 3. Simulate the LLM (AI) generating a sarcastic headline
-# In production, you would pass the uploaded image to Google Gemini Vision or OpenAI here.
-headline_text = st.text_input(
-    "Generated Headline (Edit if needed):", 
-    "When the government promises new roads but you need a boat to cross Ahmedabad traffic today."
+""",
+    unsafe_allow_html=True,
 )
 
-if uploaded_file and st.button("Generate Branded Meme"):
-    # Load the uploaded image
-    raw_image = Image.open(uploaded_file)
-    
-    # 4. PYTHON PIL: Building your custom Theme/Design from scratch
-    # We will create an Instagram Portrait canvas (1080 x 1350)
-    canvas_width, canvas_height = 1080, 1350
-    meme_canvas = Image.new('RGB', (canvas_width, canvas_height), color='white')
-    draw = ImageDraw.Draw(meme_canvas)
-    
-    # Resize the raw image to fit nicely in the middle
-    target_img_width = 1000
-    w_percent = (target_img_width / float(raw_image.size[0]))
-    h_size = int((float(raw_image.size[1]) * float(w_percent)))
-    resized_raw = raw_image.resize((target_img_width, h_size), Image.Resampling.LANCZOS)
-    
-    # Paste the image into the center of our white canvas
-    img_x = (canvas_width - target_img_width) // 2
-    img_y = 400  # Leave top 400px for the headline
-    meme_canvas.paste(resized_raw, (img_x, img_y))
-    
-    # 5. Add Custom Fonts and Text Styling
-    # (Make sure to download a font like 'impact.ttf' or 'arial.ttf' to your folder)
+st.title("⚡ AI Satirical Editorial Studio")
+st.write(
+    "Upload any topic or news screenshot. The AI will analyze the core issue, brainstorm a visual metaphor, generate a brand-new custom artwork, and build the post."
+)
+
+# Configure Gemini API Key
+api_key = st.text_input(
+    "Enter your Google Gemini API Key:",
+    type="password",
+    help="Get a free key from Google AI Studio",
+)
+uploaded_file = st.file_uploader(
+    "Upload news screenshot or topic reference...", type=["jpg", "png", "jpeg"]
+)
+extra_prompt = st.text_input(
+    "Specific angle or topic note (Optional):",
+    placeholder="e.g., Reservation system debate, cutoffs, merit vs opportunity",
+)
+
+if uploaded_file and api_key and st.button("Generate Original Editorial Post"):
+  with st.spinner(
+      "Step 1: AI is analyzing the topic and creating a satirical visual"
+      " concept..."
+  ):
+    genai.configure(api_key=api_key)
+    model = genai.GenerativeModel("gemini-1.5-flash")
+
+    # Load uploaded image for Gemini Vision
+    input_image = Image.open(uploaded_file)
+
+    # Prompt Gemini to extract topic, write a sarcastic headline, and create an image prompt
+    analysis_prompt = f"""
+        You are a top editorial cartoonist and political satirist (like The Tatva or R.K. Laxman).
+        Analyze this image and the context note: '{extra_prompt}'.
+        
+        Provide the response in EXACTLY this format:
+        HEADLINE: [Write a sharp, punchy, sarcastic editorial headline of 10-15 words in English/Hinglish]
+        IMAGE_PROMPT: [Write a detailed visual prompt describing a metaphorical, satirical editorial cartoon or dramatic 2D illustration capturing the essence of the debate. Do not put text in the image. Style: high contrast editorial cartoon, dramatic lighting, detailed, dark theme.]
+        """
+
+    response = model.generate_content([analysis_prompt, input_image])
+    output_text = response.text
+
+    # Parse headline and image prompt
+    headline = "Editorial Analysis"
+    image_prompt = "satirical political cartoon editorial illustration"
+
+    for line in output_text.split("\n"):
+      if line.startswith("HEADLINE:"):
+        headline = line.replace("HEADLINE:", "").strip()
+      elif line.startswith("IMAGE_PROMPT:"):
+        image_prompt = line.replace("IMAGE_PROMPT:", "").strip()
+
+    st.info(f"**Generated Headline:** {headline}")
+    st.caption(f"**Visual Concept Created by AI:** {image_prompt}")
+
+  with st.spinner(
+      "Step 2: Generating brand-new original artwork from scratch..."
+  ):
+    # Call free text-to-image API (Pollinations)
+    encoded_prompt = urllib.parse.quote(image_prompt)
+    image_url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=1000&height=1000&nologo=true"
+
+    img_response = requests.get(image_url)
+    if img_response.status_code == 200:
+      ai_generated_artwork = Image.open(io.BytesIO(img_response.content))
+    else:
+      st.error("Failed to generate image. Please try again.")
+      st.stop()
+
+  with st.spinner("Step 3: Assembling the final branded post..."):
+    # Create final Instagram canvas (1080 x 1440)
+    canvas_w, canvas_h = 1080, 1440
+    canvas = Image.new("RGB", (canvas_w, canvas_h), color="#0F0F0F")
+    draw = ImageDraw.Draw(canvas)
+
+    # Load fonts
     try:
-        font_large = ImageFont.truetype("arialbd.ttf", 60) # Bold headline font
-        font_watermark = ImageFont.truetype("arial.ttf", 40)
+      headline_font = ImageFont.truetype("arialbd.ttf", 46)
+      tag_font = ImageFont.truetype("arialbd.ttf", 26)
+      footer_font = ImageFont.truetype("arial.ttf", 32)
     except IOError:
-        font_large = ImageFont.load_default()
-        font_watermark = ImageFont.load_default()
-    
-    # Wrap the text so it doesn't go off the screen
-    wrapped_text = textwrap.fill(headline_text, width=35)
-    
-    # Draw the Text (Black text on the White background)
-    draw.multiline_text((40, 80), wrapped_text, fill="black", font=font_large, spacing=15)
-    
-    # 6. Add Your Brand Identity / Watermark at the bottom
-    brand_name = "© THE SARCASM INDIA"
-    draw.rectangle([(0, 1250), (1080, 1350)], fill="#FF4B4B") # Red footer bar
-    draw.text((320, 1280), brand_name, fill="white", font=font_watermark)
-    
-    # Display the final generated Image in Streamlit
-    st.image(meme_canvas, caption="Your Automated Post is Ready", use_container_width=True)
-    
-    # Allow user to download
-    meme_canvas.save("final_post.jpg")
-    with open("final_post.jpg", "rb") as file:
-        st.download_button(label="Download for Instagram", data=file, file_name="final_post.jpg", mime="image/jpeg")
+      headline_font = ImageFont.load_default()
+      tag_font = ImageFont.load_default()
+      footer_font = ImageFont.load_default()
+
+    # Draw Category Tag
+    draw.rectangle([(50, 45), (260, 85)], fill="#FF3B30")
+    draw.text((65, 52), "OPINION / EDITORIAL", fill="white", font=tag_font)
+
+    # Wrap and Draw Headline
+    wrapped_headline = textwrap.fill(headline, width=38)
+    draw.multiline_text(
+        (50, 110), wrapped_headline, fill="#FFFFFF", font=headline_font, spacing=10
+    )
+
+    # Paste Newly Generated AI Artwork
+    resized_art = ai_generated_artwork.resize(
+        (980, 980), Image.Resampling.LANCZOS
+    )
+    canvas.paste(resized_art, (50, 360))
+
+    # Bottom Branding Bar
+    draw.line([(50, 1370), (1030, 1370)], fill="#333333", width=2)
+    draw.text(
+        (50, 1385),
+        "THE UNFILTERED TRUTH  •  SWIPE FOR MORE",
+        fill="#888888",
+        font=footer_font,
+    )
+
+    # Display Result
+    st.success("Post Created!")
+    st.image(
+        canvas, caption="Final Branded Editorial Post", use_container_width=True
+    )
+
+    # Download Button
+    buf = io.BytesIO()
+    canvas.save(buf, format="JPEG", quality=95)
+    st.download_button(
+        label="Download High-Res Post",
+        data=buf.getvalue(),
+        file_name="editorial_post.jpg",
+        mime="image/jpeg",
+    )
