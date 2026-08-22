@@ -44,7 +44,6 @@ if uploaded_file and api_key and st.button("Generate Original Editorial Post"):
     # 1. Prepare the image as Base64 for the REST API
     input_image = Image.open(uploaded_file)
     buffered = io.BytesIO()
-    # Convert to RGB in case it's PNG with transparency
     input_image.convert('RGB').save(buffered, format="JPEG")
     img_b64 = base64.b64encode(buffered.getvalue()).decode("utf-8")
 
@@ -58,8 +57,8 @@ if uploaded_file and api_key and st.button("Generate Original Editorial Post"):
         IMAGE_PROMPT: [Write a detailed visual prompt describing a metaphorical, satirical editorial cartoon or dramatic 2D illustration capturing the essence of the debate. Do not put text in the image. Style: high contrast editorial cartoon, dramatic lighting, detailed, dark theme.]
         """
 
-    # 3. Direct REST API Call (Bypasses all google-generativeai library errors)
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}"
+    # 3. Direct REST API Call using gemini-3.6-flash
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key={api_key}"
     headers = {"Content-Type": "application/json"}
     payload = {
         "contents": [{
@@ -72,7 +71,7 @@ if uploaded_file and api_key and st.button("Generate Original Editorial Post"):
     
     try:
         api_response = requests.post(url, headers=headers, json=payload)
-        api_response.raise_for_status() # Check for HTTP errors
+        api_response.raise_for_status()
         output_text = api_response.json()["candidates"][0]["content"]["parts"][0]["text"]
     except Exception as e:
         st.error(f"API Error: {api_response.text if 'api_response' in locals() else str(e)}")
