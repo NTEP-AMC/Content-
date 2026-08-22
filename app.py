@@ -44,7 +44,7 @@ if uploaded_file and api_key and st.button("Generate Original Editorial Post"):
       " concept..."
   ):
     genai.configure(api_key=api_key)
-    model = genai.GenerativeModel("gemini-1.5-flash")
+    model = genai.GenerativeModel("gemini-2.5-flash")
 
     # Load uploaded image for Gemini Vision
     input_image = Image.open(uploaded_file)
